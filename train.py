@@ -2,7 +2,7 @@ import torch
 
 import copy
 
-from data import build_vocab, encode, decode
+from data import build_vocab, encode
 
 from model import TransformerModel
 
@@ -10,25 +10,21 @@ import time
 
 TRAIN_PERCENTAGE = 0.9
 
-BLOCK_SIZE = 128
-
-BATCH_SIZE = 32
-
 ROUNDING_PRECISION = 3
 
 device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
-# Return a random batch of inputs x and next-character targets y, each (BATCH_SIZE, BLOCK_SIZE).
-def get_batch(data):
+# Return a random batch of inputs x and next-character targets y, each (batch_size, block_size).
+def get_batch(data, block_size, batch_size):
 
-    starts = torch.randint(len(data) - BLOCK_SIZE - 1, (BATCH_SIZE,))
+    starts = torch.randint(len(data) - block_size - 1, (batch_size,))
 
     x_list = []
     y_list = []
 
     for s in starts:
-        x_list.append(data[s : s + BLOCK_SIZE])
-        y_list.append(data[s + 1 : s + BLOCK_SIZE + 1])
+        x_list.append(data[s : s + block_size])
+        y_list.append(data[s + 1 : s + block_size + 1])
 
     x = torch.stack(x_list)
     y = torch.stack(y_list)
@@ -37,18 +33,18 @@ def get_batch(data):
 
 # Get current loss on some data
 @torch.no_grad()
-def estimate_loss(model, data, iters=50):
+def estimate_loss(model, data, block_size, batch_size, iters=50):
     was_training = model.training # remember if model was training
     model.eval() # turn off dropout for a fair measurement
     losses = []
     for _ in range(iters):
-        x, y = get_batch(data)
+        x, y = get_batch(data, block_size, batch_size)
         _, loss = model(x, y)
         losses.append(loss.item())
     model.train(was_training) # put the model back the way we found it
     return sum(losses) / len(losses) # Return average loss
 
-def train(dataset: str, training_steps: int, model_name: str = 'model'):
+def train(dataset: str, config: dict, model_name: str = 'model'):
     encoder, decoder = build_vocab(dataset)
 
     encoded_dataset = encode(encoder, dataset)
@@ -61,9 +57,14 @@ def train(dataset: str, training_steps: int, model_name: str = 'model'):
 
     val_data = data[train_split:]
 
-    model = TransformerModel(len(encoder), BLOCK_SIZE).to(device)
+    block_size = config["block_size"]
+    batch_size = config["batch_size"]
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3) # Small learning rate to keep learning stable
+    model = TransformerModel(len(encoder), block_size, config["vector_size"], config["num_heads"], config["num_blocks"], config["dropout"]).to(device)
+
+    print(f"Parameters: {sum(p.numel() for p in model.parameters()):,}")
+
+    optimizer = torch.optim.AdamW(model.parameters(), lr=config["learning_rate"])
 
     start_time = time.perf_counter()
 
@@ -71,9 +72,9 @@ def train(dataset: str, training_steps: int, model_name: str = 'model'):
 
     best_state = None
 
-    for step in range(training_steps):
+    for step in range(config["training_steps"]):
 
-        x, y = get_batch(train_data)
+        x, y = get_batch(train_data, block_size, batch_size)
 
         _, loss = model(x, y)
 
@@ -84,8 +85,8 @@ def train(dataset: str, training_steps: int, model_name: str = 'model'):
         optimizer.step() # move each weight against gradient
 
         if step % 100 == 0:
-            train_loss = estimate_loss(model, train_data)
-            val_loss = estimate_loss(model, val_data)
+            train_loss = estimate_loss(model, train_data, block_size, batch_size)
+            val_loss = estimate_loss(model, val_data, block_size, batch_size)
             print(step, "train loss: ", round(train_loss, ROUNDING_PRECISION), "val loss: ", round(val_loss, ROUNDING_PRECISION))
 
             if val_loss < best_val:
@@ -94,10 +95,10 @@ def train(dataset: str, training_steps: int, model_name: str = 'model'):
 
     elapsed = time.perf_counter() - start_time
 
-    print(f"Trained model {model_name} for {training_steps} steps. Total elapsed time: {elapsed:.1f}s")
+    print(f"Trained model {model_name} for {config['training_steps']} steps. Total elapsed time: {elapsed:.1f}s")
 
-    final_train = estimate_loss(model, train_data)
-    final_val = estimate_loss(model, val_data)
+    final_train = estimate_loss(model, train_data, block_size, batch_size)
+    final_val = estimate_loss(model, val_data, block_size, batch_size)
     print("final", "train", round(final_train, ROUNDING_PRECISION), "val", round(final_val, ROUNDING_PRECISION))
 
     if final_val < best_val:
@@ -113,7 +114,7 @@ def train(dataset: str, training_steps: int, model_name: str = 'model'):
                 "model": best_state,
                 "char_to_int": encoder,
                 "int_to_char": decoder,
-                "block_size": BLOCK_SIZE,
+                "config": config,
             }, f"{model_name}.pt")
             print(f"Saved to {model_name}.pt")
             break
@@ -127,13 +128,40 @@ if __name__ == "__main__":
 
     data_path = input("Enter dataset path (.txt): ")
 
-    steps_input = input("Enter training steps (integer): ")
-
-    training_steps = int(steps_input)
-
     model_name = input("Enter model name: ")
+
+    training_steps = int(input("Enter training steps (integer): "))
+
+    block_size = int(input("Enter block size / context length (e.g. 128): "))
+
+    batch_size = int(input("Enter batch size (e.g. 32): "))
+
+    vector_size = int(input("Enter vector size (e.g. 128): "))
+
+    num_heads = int(input("Enter number of attention heads (e.g. 4): "))
+
+    if vector_size % num_heads != 0:
+            print("Vector size must be divisible by number of heads.")
+            exit()
+
+    num_blocks = int(input("Enter number of transformer blocks (e.g. 4): "))
+
+    dropout = float(input("Enter dropout (e.g. 0.1): "))
+
+    learning_rate = float(input("Enter learning rate (e.g. 0.001): "))
+
+    config = {
+        "training_steps": training_steps,
+        "block_size": block_size,
+        "batch_size": batch_size,
+        "vector_size": vector_size,
+        "num_heads": num_heads,
+        "num_blocks": num_blocks,
+        "dropout": dropout,
+        "learning_rate": learning_rate,
+    }
 
     with open(data_path, encoding="utf-8") as f:
         dataset = f.read()
 
-    train(dataset, training_steps, model_name)
+    train(dataset, config, model_name)

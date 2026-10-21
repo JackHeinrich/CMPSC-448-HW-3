@@ -4,6 +4,8 @@ from data import build_vocab, encode, decode
 
 from model import TransformerModel
 
+import time
+
 TRAIN_PERCENTAGE = 0.9
 
 BLOCK_SIZE = 128
@@ -61,6 +63,8 @@ def train(dataset: str, training_steps: int, model_name: str = 'model'):
 
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3) # Small learning rate to keep learning stable
 
+    start_time = time.perf_counter()
+
     for step in range(training_steps):
 
         x, y = get_batch(train_data)
@@ -78,17 +82,37 @@ def train(dataset: str, training_steps: int, model_name: str = 'model'):
 
     print("final", "train", round(estimate_loss(model, train_data), ROUNDING_PRECISION), "val", round(estimate_loss(model, val_data), ROUNDING_PRECISION))
 
-    should_save = input("Want to save? (y/n): ")
-    if should_save.strip().lower() == "y":
-        torch.save({
-            "model": model.state_dict(),
-            "char_to_int": encoder,
-            "int_to_char": decoder,
-            "block_size": BLOCK_SIZE,
-        }, f"{model_name}.pt")
-        print("Saved to sherlock.pt")
+    elapsed = time.perf_counter() - start_time
+
+    print(f"Trained model {model_name} for {training_steps} steps. Total elapsed time: {elapsed:.1f}s")
+
+
+    while True:
+        answer = input("Want to save? (y/n): ").strip().lower()
+        if answer == "y":
+            torch.save({
+                "model": model.state_dict(),
+                "char_to_int": encoder,
+                "int_to_char": decoder,
+                "block_size": BLOCK_SIZE,
+            }, f"{model_name}.pt")
+            print(f"Saved to {model_name}.pt")
+            break
+        elif answer == "n":
+            print("Not saved.")
+            break
 
 if __name__ == "__main__":
-    with open("./pg1661.txt", encoding="utf-8") as f:
+
+    data_path = input("Enter dataset path (.txt): ")
+
+    steps_input = input("Enter training steps (integer): ")
+
+    training_steps = int(steps_input)
+
+    model_name = input("Enter model name: ")
+
+    with open(data_path, encoding="utf-8") as f:
         dataset = f.read()
-    train(dataset, 10, "sherlock")
+
+    train(dataset, training_steps, model_name)

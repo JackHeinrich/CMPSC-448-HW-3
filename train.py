@@ -1,5 +1,7 @@
 import torch
 
+import copy
+
 from data import build_vocab, encode, decode
 
 from model import TransformerModel
@@ -65,6 +67,10 @@ def train(dataset: str, training_steps: int, model_name: str = 'model'):
 
     start_time = time.perf_counter()
 
+    best_val = float("inf")
+
+    best_state = None
+
     for step in range(training_steps):
 
         x, y = get_batch(train_data)
@@ -73,25 +79,38 @@ def train(dataset: str, training_steps: int, model_name: str = 'model'):
 
         optimizer.zero_grad() # clear gradients so they dont accumulate
 
-        loss.backward() # backprop ti find new gradients
+        loss.backward() # backprop to find new gradients
 
-        optimizer.step() # move each weight with gradient
+        optimizer.step() # move each weight against gradient
 
         if step % 100 == 0:
-            print(step, "train", round(estimate_loss(model, train_data), ROUNDING_PRECISION), "val", round(estimate_loss(model, val_data), ROUNDING_PRECISION))
+            train_loss = estimate_loss(model, train_data)
+            val_loss = estimate_loss(model, val_data)
+            print(step, "train loss: ", round(train_loss, ROUNDING_PRECISION), "val loss: ", round(val_loss, ROUNDING_PRECISION))
 
-    print("final", "train", round(estimate_loss(model, train_data), ROUNDING_PRECISION), "val", round(estimate_loss(model, val_data), ROUNDING_PRECISION))
+            if val_loss < best_val:
+                best_val = val_loss
+                best_state = copy.deepcopy(model.state_dict())
 
     elapsed = time.perf_counter() - start_time
 
     print(f"Trained model {model_name} for {training_steps} steps. Total elapsed time: {elapsed:.1f}s")
 
+    final_train = estimate_loss(model, train_data)
+    final_val = estimate_loss(model, val_data)
+    print("final", "train", round(final_train, ROUNDING_PRECISION), "val", round(final_val, ROUNDING_PRECISION))
+
+    if final_val < best_val:
+        best_val = final_val
+        best_state = copy.deepcopy(model.state_dict())
+
+    print(f"Best val loss: {best_val:.3f}")
 
     while True:
         answer = input("Want to save? (y/n): ").strip().lower()
         if answer == "y":
             torch.save({
-                "model": model.state_dict(),
+                "model": best_state,
                 "char_to_int": encoder,
                 "int_to_char": decoder,
                 "block_size": BLOCK_SIZE,

@@ -104,6 +104,8 @@ def train(dataset: str, training_steps: int, model_name: str = 'model'):
 
 if __name__ == "__main__":
 
+    print(f"Training on: {device}.")
+
     data_path = input("Enter dataset path (.txt): ")
 
     steps_input = input("Enter training steps (integer): ")

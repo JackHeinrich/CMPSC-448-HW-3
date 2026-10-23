@@ -12,6 +12,8 @@ TRAIN_PERCENTAGE = 0.9
 
 ROUNDING_PRECISION = 3
 
+SAVE_INTERVAL = 1000
+
 device = "cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"
 
 # Return a random batch of inputs x and next-character targets y, each (batch_size, block_size).
@@ -43,6 +45,14 @@ def estimate_loss(model, data, block_size, batch_size, iters=50):
         losses.append(loss.item())
     model.train(was_training) # put the model back the way we found it
     return sum(losses) / len(losses) # Return average loss
+
+def save_model(path, state, encoder, decoder, config):
+    torch.save({
+        "model": state,
+        "char_to_int": encoder,
+        "int_to_char": decoder,
+        "config": config,
+    }, path)
 
 def train(dataset: str, config: dict, model_name: str = 'model'):
     encoder, decoder = build_vocab(dataset)
@@ -93,6 +103,10 @@ def train(dataset: str, config: dict, model_name: str = 'model'):
                 best_val = val_loss
                 best_state = copy.deepcopy(model.state_dict())
 
+        if step > 0 and step % SAVE_INTERVAL == 0:
+            save_model(f"{model_name}_checkpoint.pt", best_state, encoder, decoder, config)
+            print(f"Checkpoint saved to {model_name}_checkpoint.pt")
+
     elapsed = time.perf_counter() - start_time
 
     print(f"Trained model {model_name} for {config['training_steps']} steps. Total elapsed time: {elapsed:.1f}s")
@@ -110,12 +124,7 @@ def train(dataset: str, config: dict, model_name: str = 'model'):
     while True:
         answer = input("Want to save? (y/n): ").strip().lower()
         if answer == "y":
-            torch.save({
-                "model": best_state,
-                "char_to_int": encoder,
-                "int_to_char": decoder,
-                "config": config,
-            }, f"{model_name}.pt")
+            save_model(f"{model_name}.pt", best_state, encoder, decoder, config)
             print(f"Saved to {model_name}.pt")
             break
         elif answer == "n":
